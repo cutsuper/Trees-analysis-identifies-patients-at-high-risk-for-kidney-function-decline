@@ -1,5 +1,5 @@
 ---
-title: "4_CART_decision_tree"
+title: "CART DT"
 author: "Weihao Wang"
 date: "2024-12-03"
 output: html_document

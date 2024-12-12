@@ -1,0 +1,266 @@
+---
+title: "Univariate Analysis"
+author: "Weihao Wang"
+date: "2024-12-02"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+data = read.csv('data_cleaned_N1747.csv')[,-1]
+colnames(data)[c(20,22,24,25,46)] = c('Psychiatric_diagnosis', 'LOHS', 'MV', 'MV_days', 'fast_eGFR_decline')
+previous_data = data[,1:46]
+lab_measures = data[,47:101]
+selected_v1 = lab_measures %>% select(wbc, hb, platelets, sodium, k, cl, hco3, ca, phosphate, MG, glucose)
+selected_v1 <- selected_v1 %>% rename(WBC = wbc,Hb = hb,platelets = platelets,sodium = sodium,K = k,Cl = cl,HCO3 = hco3,Ca = ca,phosphate = phosphate,Mg = MG,glucose = glucose)
+selected_v2 = selected_v1 %>% select(WBC, Hb, platelets)
+# For the lab measurements (last value for all)
+# 1) use wbc, hb and platelets
+data_v1 = cbind(previous_data, selected_v2) # 1747 obs of 49 var
+# 2) use wbc, hb, platelets, sodium, k, cl, hco3, ca, phosphate, MG and glucose
+data_v2 = cbind(previous_data, selected_v1) # 1747 obs of 57 var
+
+write.csv(data_v1, 'data_cleaned_N1747_49var.csv', row.names = FALSE)
+write.csv(data_v2, 'data_cleaned_N1747_57var.csv', row.names = FALSE)
+```
+
+# fast eGFR decline
+```{r}
+#data_v1 = data_v2
+
+# Baseline eGFR group indicators
+data_v1 <- data_v1 %>%
+  mutate(
+    gfr_gt_120 = ifelse(gfr_baseline > 120, 1, 0),
+    gfr_90_120 = ifelse(gfr_baseline >= 90 & gfr_baseline <= 120, 1, 0),
+    gfr_60_89 = ifelse(gfr_baseline >= 60 & gfr_baseline < 90, 1, 0),
+    gfr_30_59 = ifelse(gfr_baseline >= 30 & gfr_baseline < 60, 1, 0),
+    gfr_15_29 = ifelse(gfr_baseline >= 15 & gfr_baseline < 30, 1, 0),
+    gfr_lt_15 = ifelse(gfr_baseline < 15, 1, 0)
+  )
+
+# Initialize results dataframe
+results <- data.frame(
+  Variable = character(),
+  fast_eGFR_decline = character(), # Change to character to accommodate "Overall" rows
+  Count_1 = numeric(),
+  Percent_1 = numeric(),
+  Mean = numeric(),
+  SD = numeric(),
+  P_Value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Get the list of variables excluding 'fast_eGFR_decline'
+vars <- colnames(data_v1)[colnames(data_v1) != "fast_eGFR_decline"]
+
+# Loop through each variable to calculate statistics and p-values
+for (var in vars) {
+  if (all(data_v1[[var]] %in% c(0, 1), na.rm = TRUE)) {
+    # Binary variable
+    # Perform proportion test for groups
+    tab <- table(data_v1$fast_eGFR_decline, data_v1[[var]])
+    if (ncol(tab) == 2) { # Ensure the table has two columns (0 and 1)
+      prop_test <- prop.test(tab[, 2], rowSums(tab))
+      p_value <- prop_test$p.value
+    } else {
+      p_value <- NA
+    }
+
+    # Add group-wise statistics
+    for (group in unique(data_v1$fast_eGFR_decline)) {
+      subset_data <- data_v1[data_v1$fast_eGFR_decline == group, var, drop = FALSE]
+      count_1 <- sum(subset_data[[var]] == 1, na.rm = TRUE)
+      percent_1 <- (count_1 / nrow(subset_data)) * 100
+      results <- rbind(results, data.frame(
+        Variable = var,
+        fast_eGFR_decline = as.character(group),
+        Count_1 = count_1,
+        Percent_1 = percent_1,
+        Mean = NA,
+        SD = NA,
+        P_Value = p_value
+      ))
+    }
+
+    # Add overall statistics
+    count_1 <- sum(data_v1[[var]] == 1, na.rm = TRUE)
+    percent_1 <- (count_1 / nrow(data_v1)) * 100
+    results <- rbind(results, data.frame(
+      Variable = var,
+      fast_eGFR_decline = "Overall",
+      Count_1 = count_1,
+      Percent_1 = percent_1,
+      Mean = NA,
+      SD = NA,
+      P_Value = NA # No p-value for overall statistics
+    ))
+
+  } else if (is.numeric(data_v1[[var]])) {
+    # Numeric variable
+    # Perform logistic regression for groups
+    glm_model <- tryCatch(
+      glm(fast_eGFR_decline ~ data_v1[[var]], data = data_v1, family = binomial),
+      error = function(e) NULL
+    )
+    p_value <- if (!is.null(glm_model)) {
+      coef_summary <- summary(glm_model)$coefficients
+      if (nrow(coef_summary) > 1) coef_summary[2, 4] else NA
+    } else {
+      NA
+    }
+
+    # Add group-wise statistics
+    for (group in unique(data_v1$fast_eGFR_decline)) {
+      subset_data <- data_v1[data_v1$fast_eGFR_decline == group, var, drop = FALSE]
+      mean_val <- mean(subset_data[[var]], na.rm = TRUE)
+      sd_val <- sd(subset_data[[var]], na.rm = TRUE)
+      results <- rbind(results, data.frame(
+        Variable = var,
+        fast_eGFR_decline = as.character(group),
+        Count_1 = NA,
+        Percent_1 = NA,
+        Mean = mean_val,
+        SD = sd_val,
+        P_Value = p_value
+      ))
+    }
+
+    # Add overall statistics
+    mean_val <- mean(data_v1[[var]], na.rm = TRUE)
+    sd_val <- sd(data_v1[[var]], na.rm = TRUE)
+    results <- rbind(results, data.frame(
+      Variable = var,
+      fast_eGFR_decline = "Overall",
+      Count_1 = NA,
+      Percent_1 = NA,
+      Mean = mean_val,
+      SD = sd_val,
+      P_Value = NA # No p-value for overall statistics
+    ))
+  }
+}
+
+# Display results
+print(results)
+
+
+# Save results to a CSV file
+write.csv(results, "results/2_summary_fast_eGFR_decline.csv", row.names = FALSE)
+```
+
+# COVID
+```{r}
+data_v1
+
+# Initialize results dataframe
+results <- data.frame(
+  Variable = character(),
+  COVID = character(), # Change to character to accommodate "Overall" rows
+  Count_1 = numeric(),
+  Percent_1 = numeric(),
+  Mean = numeric(),
+  SD = numeric(),
+  P_Value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Get the list of variables excluding 'COVID'
+vars <- colnames(data_v1)[colnames(data_v1) != "COVID"]
+
+# Loop through each variable to calculate statistics and p-values
+for (var in vars) {
+  if (all(data_v1[[var]] %in% c(0, 1), na.rm = TRUE)) {
+    # Binary variable
+    # Perform proportion test for groups
+    tab <- table(data_v1$COVID, data_v1[[var]])
+    if (ncol(tab) == 2) { # Ensure the table has two columns (0 and 1)
+      prop_test <- prop.test(tab[, 2], rowSums(tab))
+      p_value <- prop_test$p.value
+    } else {
+      p_value <- NA
+    }
+
+    # Add group-wise statistics
+    for (group in unique(data_v1$COVID)) {
+      subset_data <- data_v1[data_v1$COVID == group, var, drop = FALSE]
+      count_1 <- sum(subset_data[[var]] == 1, na.rm = TRUE)
+      percent_1 <- (count_1 / nrow(subset_data)) * 100
+      results <- rbind(results, data.frame(
+        Variable = var,
+        COVID = as.character(group),
+        Count_1 = count_1,
+        Percent_1 = percent_1,
+        Mean = NA,
+        SD = NA,
+        P_Value = p_value
+      ))
+    }
+
+    # Add overall statistics
+    count_1 <- sum(data_v1[[var]] == 1, na.rm = TRUE)
+    percent_1 <- (count_1 / nrow(data_v1)) * 100
+    results <- rbind(results, data.frame(
+      Variable = var,
+      COVID = "Overall",
+      Count_1 = count_1,
+      Percent_1 = percent_1,
+      Mean = NA,
+      SD = NA,
+      P_Value = NA # No p-value for overall statistics
+    ))
+
+  } else if (is.numeric(data_v1[[var]])) {
+    # Numeric variable
+    # Perform logistic regression for groups
+    glm_model <- tryCatch(
+      glm(COVID ~ data_v1[[var]], data = data_v1, family = binomial),
+      error = function(e) NULL
+    )
+    p_value <- if (!is.null(glm_model)) {
+      coef_summary <- summary(glm_model)$coefficients
+      if (nrow(coef_summary) > 1) coef_summary[2, 4] else NA
+    } else {
+      NA
+    }
+
+    # Add group-wise statistics
+    for (group in unique(data_v1$COVID)) {
+      subset_data <- data_v1[data_v1$COVID == group, var, drop = FALSE]
+      mean_val <- mean(subset_data[[var]], na.rm = TRUE)
+      sd_val <- sd(subset_data[[var]], na.rm = TRUE)
+      results <- rbind(results, data.frame(
+        Variable = var,
+        COVID = as.character(group),
+        Count_1 = NA,
+        Percent_1 = NA,
+        Mean = mean_val,
+        SD = sd_val,
+        P_Value = p_value
+      ))
+    }
+
+    # Add overall statistics
+    mean_val <- mean(data_v1[[var]], na.rm = TRUE)
+    sd_val <- sd(data_v1[[var]], na.rm = TRUE)
+    results <- rbind(results, data.frame(
+      Variable = var,
+      COVID = "Overall",
+      Count_1 = NA,
+      Percent_1 = NA,
+      Mean = mean_val,
+      SD = sd_val,
+      P_Value = NA # No p-value for overall statistics
+    ))
+  }
+}
+
+# Display results
+print(results)
+
+
+# Save results to a CSV file
+write.csv(results, "results/2_summary_COVID.csv", row.names = FALSE)
+```

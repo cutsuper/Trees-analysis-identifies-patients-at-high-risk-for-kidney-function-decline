@@ -30,6 +30,50 @@ CART was utilized to:
 - Create a visual decision-making model
 - Offer insights into non-linear interactions
 
+## Project Workflow and RMarkdown Files
+
+### 1. `1_preprocessing.rmd`
+**Purpose**: Data Cleaning and Preparation
+- Remove missing or inconsistent data
+- Handle outliers
+- Prepare dataset for further analysis
+- Ensure data quality and reliability
+
+### 2. `2_univariate_analysis.rmd`
+**Purpose**: Initial Variable Exploration
+- Conduct univariate analysis
+- Perform logistic regression for continuous variables
+- Run proportions test for binary indicators
+- Provide initial insights into individual variable characteristics
+
+### 3. `3_RF.rmd`
+**Purpose**: Random Forest Feature Selection
+- Fit random forest model
+- Identify and rank top influential variables
+- Determine feature importance
+- Select most predictive features for further analysis
+
+### 4. `4_DT.rmd`
+**Purpose**: CART Decision Tree Analysis
+- Develop Classification and Regression Tree model
+- Visualize variable interactions
+- Provide interpretable decision pathways
+- Generate actionable insights for clinical researchers
+
+### 5. `5_LR.rmd`
+**Purpose**: Logistic Regression Modeling
+- Conduct univariable logistic regression
+- Perform multivariate logistic regression
+- Quantify variable effects
+- Assess statistical significance of predictors
+
+## Recommended Workflow
+1. Start with `1_preprocessing.rmd`
+2. Run `2_univariate_analysis.rmd`
+3. Execute `3_RF.rmd` for feature selection
+4. Analyze results with `4_DT.rmd`
+5. Validate findings using `5_LR.rmd`
+
 ## Result Interpretation
 
 ### Feature Importance
@@ -51,6 +95,14 @@ CART was utilized to:
 - Results are specific to the current dataset
 - Potential for overfitting
 - Requires periodic revalidation
+
+## Dependencies
+- R
+- tidyverse
+- caret
+- randomForest
+- rpart
+- glmnet
 
 ## Dependencies
 - R

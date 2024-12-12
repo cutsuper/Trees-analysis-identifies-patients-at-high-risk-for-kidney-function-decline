@@ -1,0 +1,224 @@
+---
+title: "Logistic regression"
+author: "Weihao Wang"
+date: "2024-12-04"
+output: html_document
+---
+
+```{r}
+data = read.csv('data_cleaned_N1747_49var_nomissing.csv')
+data$Baseline_eGFR = data$gfr_baseline
+data = subset(data, select = -c(Female, Non_White,Race_no_matching, Non_Hispanic, Ethnicity_no_matching, Cerebral_ischemia, Transplant_kidney, AKI_123, AKI_1, AKI_2, AKI_3 , AKI_dx, Mortality, gfr_final, gfr_baseline, gfr_change,gfr_pchange, days_follow_up, n_creatinine_measurements,gfr_change_per_year,gfr_pchange_per_year))
+
+data_v1 = data[,1:25] # previous data
+data_v2 = data[,1:28] # add wbc, hb and platelets
+data_v3 = data # add wbc, hb, platelets and baseline eGFR
+
+data_v1_s = subset(data_v1, select = c(fast_eGFR_decline, LOHS, Vasopressor, MV_days, White, age, Asthma, AKI_23, HTN, CKD, COPD, BMI, Male, Psychiatric_diagnosis, DM, CAD)) # 15
+data_v2_s = subset(data_v2, select = c(fast_eGFR_decline, LOHS, Vasopressor, White, age, AKI_23, MV_days, Asthma, WBC, MV, Psychiatric_diagnosis, BMI, platelets, Hb, Male, HTN)) # 15
+data_v3_s = subset(data_v3, select = c(fast_eGFR_decline, Baseline_eGFR, LOHS, AKI_23, White, Vasopressor, COPD, MV, age, CKD, MV_days, WBC, BMI, platelets, Hb, Male, HTN, Psychiatric_diagnosis)) # 17
+```
+
+```{r}
+data_s = data_v3_s
+# Load necessary libraries
+library(dplyr)
+library(broom)
+
+# Define the dataset and response variable
+response <- "fast_eGFR_decline"
+predictors <- setdiff(names(data_s), response) # All columns except the response variable
+
+# Function to perform univariable logistic regression
+univariable_results <- lapply(predictors, function(pred) {
+  formula <- as.formula(paste(response, "~", pred))
+  model <- glm(formula, data = data_s, family = binomial)
+  summary <- tidy(model, conf.int = TRUE)
+  data.frame(
+    Predictor = pred,
+    Univariable_OR = exp(coef(model)[2]),
+    Univariable_Lower_CI = exp(confint(model)[2, 1]),
+    Univariable_Upper_CI = exp(confint(model)[2, 2]),
+    Univariable_p_value = summary$p.value[2]
+  )
+})
+
+# Combine univariable results
+univariable_results <- do.call(rbind, univariable_results)
+
+# Perform multivariable logistic regression
+multivariable_model <- glm(
+  as.formula(paste(response, "~", paste(predictors, collapse = "+"))),
+  data = data_s,
+  family = binomial
+)
+multivariable_summary <- tidy(multivariable_model, conf.int = TRUE)
+
+# Extract multivariable results
+multivariable_results <- data.frame(
+  Predictor = multivariable_summary$term[-1], # Exclude the intercept
+  Multivariable_OR = exp(multivariable_summary$estimate[-1]),
+  Multivariable_Lower_CI = exp(multivariable_summary$conf.low[-1]),
+  Multivariable_Upper_CI = exp(multivariable_summary$conf.high[-1]),
+  Multivariable_p_value = multivariable_summary$p.value[-1]
+)
+
+# Combine univariable and multivariable results
+final_table <- univariable_results %>%
+  left_join(multivariable_results, by = "Predictor")
+
+# View the final table
+print(final_table)
+write.csv(final_table, 'results/LR_results.csv', row.names = F)
+```
+
+# perform Propensity Score Matching (PSM) using the MatchIt package, followed by balance assessment through standardized mean differences (SMDs) for continuous variables and a chi-square test for categorical variables.
+
+```{r}
+data_s = data_v1
+
+# Install the required packages if not already installed
+if (!require(MatchIt)) install.packages("MatchIt")
+if (!require(cobalt)) install.packages("cobalt")  # For balance diagnostics
+
+# Load the libraries
+library(MatchIt)
+library(cobalt)
+
+## Step 1: Perform PSM
+# Perform propensity score matching
+matchit_model <- matchit(ICU_admission ~ Male + White + Hispanic + age,
+                         data = data_s,
+                         method = "nearest",
+                         distance = "glm",
+                         ratio = 1,
+                         replace = FALSE)
+
+# Create matched dataset
+matched_data <- match.data(matchit_model)
+
+## Step 2: Assess Balance Post-Matching
+# Standardized Mean Differences (SMD) for Continuous Variables
+# Calculate SMD for continuous variables (e.g., age)
+smd_pre <- bal.tab(matchit_model, stats = "mean.diffs", un = TRUE)$Balance$Age$Mean.Diff.Un
+smd_post <- bal.tab(matchit_model, stats = "mean.diffs", un = FALSE)$Balance$Age$Mean.Diff.Adj
+
+# Print results
+cat("SMD for Age (Pre-Matching):", smd_pre, "\n")
+cat("SMD for Age (Post-Matching):", smd_post, "\n")
+
+# Categorical Variables Using Chi-Square Test
+# Perform chi-square test for categorical variables (e.g., Male)
+table_pre <- table(data_s$ICU_admission, data_s$Male)
+table_post <- table(matched_data$ICU_admission, matched_data$Male)
+
+chi_pre <- chisq.test(table_pre)
+chi_post <- chisq.test(table_post)
+
+# Print chi-square test results
+cat("Chi-Square Test for Male (Pre-Matching): p-value =", chi_pre$p.value, "\n")
+cat("Chi-Square Test for Male (Post-Matching): p-value =", chi_post$p.value, "\n")
+
+## Step 3: Summarize Results
+# Balance summary before and after matching
+summary_balance <- bal.tab(matchit_model, stats = c("mean.diffs", "variance.ratios"))
+
+# Visualize balance for all covariates
+love.plot(matchit_model, threshold = 0.1, stats = "mean.diffs", abs = TRUE)
+
+```
+
+
+```{r}
+data_s = data_v1
+
+# Install the required packages if not already installed
+if (!require(MatchIt)) install.packages("MatchIt")
+if (!require(cobalt)) install.packages("cobalt")  # For balance diagnostics
+
+# Load the libraries
+library(MatchIt)
+library(cobalt)
+
+## Step 1: Perform PSM
+# Perform propensity score matching
+matchit_model <- matchit(COVID ~ Male + White + Hispanic + age,
+                         data = data_s,
+                         method = "nearest",
+                         distance = "glm",
+                         ratio = 1,
+                         replace = FALSE)
+
+# Create matched dataset
+matched_data <- match.data(matchit_model)
+
+## Step 2: Assess Balance Post-Matching
+# Standardized Mean Differences (SMD) for Continuous Variables
+# Calculate SMD for continuous variables (e.g., age)
+smd_pre <- bal.tab(matchit_model, stats = "mean.diffs", un = TRUE)$Balance$Age$Mean.Diff.Un
+smd_post <- bal.tab(matchit_model, stats = "mean.diffs", un = FALSE)$Balance$Age$Mean.Diff.Adj
+
+# Print results
+cat("SMD for Age (Pre-Matching):", smd_pre, "\n")
+cat("SMD for Age (Post-Matching):", smd_post, "\n")
+
+# Categorical Variables Using Chi-Square Test
+# Perform chi-square test for categorical variables (e.g., Male)
+table_pre <- table(data_s$COVID, data_s$Male)
+table_post <- table(matched_data$COVID, matched_data$Male)
+
+chi_pre <- chisq.test(table_pre)
+chi_post <- chisq.test(table_post)
+
+# Print chi-square test results
+cat("Chi-Square Test for Male (Pre-Matching): p-value =", chi_pre$p.value, "\n")
+cat("Chi-Square Test for Male (Post-Matching): p-value =", chi_post$p.value, "\n")
+
+## Step 3: Summarize Results
+# Balance summary before and after matching
+summary_balance <- bal.tab(matchit_model, stats = c("mean.diffs", "variance.ratios"))
+
+# Visualize balance for all covariates
+love.plot(matchit_model, threshold = 0.1, stats = "mean.diffs", abs = TRUE)
+```
+
+
+```{r}
+library(cobalt)
+
+# Generate balance table for all variables (both matched and unmatched)
+balance_table <- bal.tab(matchit_model, 
+                         addl = ~ Male + White + Hispanic + age + DM + HF + CKD + COPD + HTN + CAD + Cancer + Asthma + 
+Psychiatric_diagnosis + BMI + LOHS + ICU_admission + MV + MV_days + ARD + ARDS + 
+Vasopressor + Sepsis + AKI_23 + COVID + fast_eGFR_decline,
+                         stats = "mean.diffs",  # Request standardized mean differences
+                         un = TRUE)            # Include pre-matching values for comparison
+
+# Print balance table
+print(balance_table)
+
+# Visualize SMDs using a Love plot
+love.plot(matchit_model, 
+          addl = ~ Male + White + Hispanic + age + DM + HF + CKD + COPD + HTN + CAD + Cancer + Asthma + 
+Psychiatric_diagnosis + BMI + LOHS + ICU_admission + MV + MV_days + ARD + ARDS + 
+Vasopressor + Sepsis + AKI_23 + COVID + fast_eGFR_decline,
+          threshold = 0.1,                               # Use a threshold for SMD
+          stats = "mean.diffs",                          # Plot standardized mean differences
+          abs = TRUE)                                    # Plot absolute values of SMDs
+
+# Example for a categorical variable (e.g., Platelets_category)
+# Pre-matching table
+table_pre <- table(data_v1$ICU_admission, data_v1$Platelets_category)
+
+# Post-matching table
+table_post <- table(matched_data$ICU_admission, matched_data$Platelets_category)
+
+# Chi-square tests
+chi_pre <- chisq.test(table_pre)
+chi_post <- chisq.test(table_post)
+
+# Print results
+cat("Chi-Square Test (Pre-Matching): p-value =", chi_pre$p.value, "\n")
+cat("Chi-Square Test (Post-Matching): p-value =", chi_post$p.value, "\n")
+
+```

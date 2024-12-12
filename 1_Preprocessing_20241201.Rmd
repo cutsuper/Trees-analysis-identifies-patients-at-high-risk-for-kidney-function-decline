@@ -1,0 +1,221 @@
+---
+title: "Preprocessing"
+author: "Weihao Wang"
+date: "2024-12-01"
+output: html_document
+---
+
+```{r}
+library(stringr)
+library(dplyr)
+data = read.csv('data_N7665.csv') # 7665 obs of 422 var
+
+# Replace NA with 0 (For binary variables, NA for 0 in the original data)
+len = sapply(data, function(x) length(unique(x))) 
+ord = (1:dim(data)[2])[len<=2]
+# Replace NA with 0
+data[,ord][is.na(data[,ord])] = 0
+
+# 1. Exclude ESRD=1
+data = data[data$dx_esrd==0,] # 7391 obs of 422 var
+
+### GFR
+gfr_baseline = data$previous_gfr_21
+gfr_baseline[is.na(data$previous_gfr_21)] = data$min_gfr_21[is.na(data$previous_gfr_21)]
+gfr_final = rep(0, length = length(gfr_baseline))
+for(i in 1:length(gfr_final)){
+  x = tail(str_split(data$any_gfrs, '\\,')[[i]],1)
+  if(x == ''){
+    gfr_final[i] = NA
+  }else{
+    gfr_final[i] = as.numeric(gsub(']', replacement = "", x))
+  }
+}
+
+gfr_change = gfr_final - gfr_baseline
+gfr_change_abs = abs(gfr_change)
+gfr_pchange = gfr_change/gfr_baseline*100
+
+days = rep(0, length = length(gfr_baseline))
+for(i in 1:length(gfr_final)){
+  x = tail(str_split(data$gfr_any_days_forward, '\\,')[[i]],1)
+  if(x == ''){
+    days[i] = NA
+  }else{
+    days[i] = as.numeric(gsub(']', replacement = "", x))
+  }
+}
+days_follow_up = days
+
+n_creatinine_measurements = data$n_creatinine_measurements
+
+gfr_change_per_year = gfr_change/days_follow_up*365
+gfr_pchange_per_year = gfr_pchange/days_follow_up*365
+# Fast GFR decline
+# The target outcome of “fast eGFR decline” was defined as ≥5 ml/min/1.73 m2 per year
+fast_gfr_decline = gfr_change_per_year < -5
+GFR = as.data.frame(cbind(gfr_baseline, gfr_final, gfr_change, gfr_pchange, days_follow_up, n_creatinine_measurements, gfr_change_per_year, gfr_pchange_per_year, fast_gfr_decline))
+
+### Indicators
+Male = as.numeric(data$gender_concept_name == 'MALE')
+Female = as.numeric(data$gender_concept_name == 'FEMALE')
+White = as.numeric(data$race_concept_name == 'White')
+Non_White = as.numeric(data$race_concept_name != 'White')
+Race_no_matching = as.numeric(data$race_concept_name == 'No matching concept')
+Non_Hispanic = as.numeric(data$ethnicity_concept_name == 'Not Hispanic or Latino')
+Hispanic = as.numeric(data$ethnicity_concept_name == 'Hispanic or Latino')
+Ethnicity_no_matching = as.numeric(data$ethnicity_concept_name == 'No matching concept')
+age = data$age_at_visit_start_in_years_int
+BMI = data$BMI
+# severity of illness
+data$visit_start_datetime = gsub("\\d{2}:\\d{2}:\\d{2}", replacement = "", x = data$visit_start_datetime)
+data$visit_start_datetime = gsub(" ", replacement = "", x = data$visit_start_datetime)
+data$visit_end_datetime = gsub("\\d{2}:\\d{2}:\\d{2}", replacement = "", x = data$visit_end_datetime)
+data$visit_end_datetime = gsub(" ", replacement = "", x = data$visit_end_datetime)
+Length_of_hospital_stay = as.numeric(as.Date(data$visit_end_datetime, format = '%Y-%m-%d')) - as.numeric(as.Date(data$visit_start_datetime, format = '%Y-%m-%d'))
+ICU_admission = data$is_icu
+#Length_of_ICU_stay = data$icu_unit_days
+#Length_of_ICU_stay[is.na(Length_of_ICU_stay)] = 0 #!
+Invasive_vent = data$has_invasive_vent
+Invasive_vent_days = data$invasive_vent_days
+ICU_admission[Invasive_vent == 1] = 1
+Invasive_vent_days[is.na(Invasive_vent_days)] = 0 #!
+ARD = data$acute_respiratory_disease
+ARDS = data$acute_respiratory_distress_syndrome
+Vasopressor = data$vasopressors
+Sepsis = data$dx_sepsis
+DM = data$dx_diabetes_mellitus
+HF = data$dx_hf
+CKD = data$dx_ckd
+COPD = data$dx_copd
+HTN = data$dx_htn
+CAD = data$dx_cad
+Cancer = data$dx_cancer
+Asthma = data$dx_asthma
+Cerebral_ischemia = as.numeric((data$dx_cerebral_ischemia==1)|(data$dx_transient_cerebral_ischemia==1))
+Transplant_kidney = data$transplant_kidney
+
+### Variables
+### Demographics
+Demographics = cbind(Male, Female, White, Non_White,Race_no_matching, Non_Hispanic, Hispanic, Ethnicity_no_matching, age)
+### Comorbid conditions
+Comorbidities = cbind(DM, HF, CKD, COPD, HTN, CAD, Cancer, Asthma, Cerebral_ischemia, Transplant_kidney)
+current_psych_diagnosis = data[,c(401:407,409,411,415:416)]
+Current_psych_diagnosis = (rowSums(current_psych_diagnosis) > 0)
+Comorbidities = cbind(Comorbidities, Current_psych_diagnosis)
+### BMI
+### Severity of illness
+Severity_of_illness = cbind(Length_of_hospital_stay, ICU_admission, Invasive_vent, Invasive_vent_days, ARD, ARDS, Vasopressor, Sepsis)
+
+
+AKI_123 = (data$adjusted_creatinine_ratio >= 1.5)|(data$has_rrt == 1)
+AKI_23 = (data$adjusted_creatinine_ratio >= 2)|(data$has_rrt == 1)
+AKI_1 = (data$adjusted_creatinine_ratio >= 1.5 & data$adjusted_creatinine_ratio<2) & (data$has_rrt != 1)
+AKI_2 = (data$adjusted_creatinine_ratio >= 2 & data$adjusted_creatinine_ratio<3) & (data$has_rrt != 1)
+AKI_3 = (data$adjusted_creatinine_ratio >= 3)|(data$has_rrt == 1)
+AKI_dx = data$aki_concept_set_dx
+AKI = cbind(AKI_123, AKI_23, AKI_1, AKI_2, AKI_3, AKI_dx)
+Mortality = data$mortality
+COVID = data$is_case
+# Patient ID
+ID = data$person_id
+# All the last measures
+clinical_and_laboratory_measurements = data %>% select(contains("last", ignore.case = TRUE))
+names(clinical_and_laboratory_measurements) <- gsub("last_", "", names(clinical_and_laboratory_measurements))
+
+# All the cleaned variables (with NA)
+data_v1 = data.frame(cbind(Demographics, Comorbidities, BMI, Severity_of_illness, AKI, Mortality, COVID, GFR, clinical_and_laboratory_measurements)) # 7391 obs of 101 var
+
+# 2. Exclude AKI or BMI data missing
+columns_to_check_1 <- c("AKI_123", "AKI_23", "AKI_1", "AKI_2", "AKI_3", "BMI", "gfr_baseline")
+data_v2 <- data_v1[complete.cases(data_v1[, columns_to_check_1]), ] # 6954 obs of 101 var
+data_v2 = data_v2[(data_v2$BMI>=8 & data_v2$BMI <= 150),] # 6930 obs of 101 var
+
+# 3. Exclude mortality
+data_v3 <- data_v2[data_v2$Mortality == 0, ] # 6621 obs of 101 var
+
+# 4. Exclude GFR measures < 2 (already excluded at the very begining)
+columns_to_check_2 <- c("gfr_final", "gfr_change", "gfr_pchange", "days_follow_up", "n_creatinine_measurements")
+data_v4 <- data_v3[complete.cases(data_v3[, columns_to_check_2]), ] # 2561 obs of 101 var
+data_v4 <- data_v4[data_v4$gfr_pchange <= 1000,] # 2560 obs of 101 var (2560)
+
+# 5. Exclude follow-up dates < 90 days
+data_v5 = data_v4[data_v4$days_follow_up >= 90,] # 1747 obs of 101 var
+
+# Cleaned data with NA
+data_aki = data_v5
+write.csv(data_aki, 'data_cleaned_N1747.csv')
+
+missing_counts <- sapply(data_aki, function(x) sum(is.na(x)))
+missing_rates <- missing_counts / nrow(data_aki)  # Multiply by 100 to get a percentage
+missing_summary <- data.frame(
+  Variable = names(data_aki),
+  Missing_Count = missing_counts,
+  Missing_Rate_Percent = missing_rates
+)
+write.csv(missing_summary, 'results/1_missing_summary.csv')
+
+variables_less_than_5 <- missing_summary$Variable[missing_summary$Missing_Rate_Percent < 0.05]
+variables_greater_than_5 <- missing_summary$Variable[missing_summary$Missing_Rate_Percent > 0.05]
+
+
+```
+
+
+clinical and laboratory measurements:
+
+Systolic Blood Pressure: The pressure in your arteries during the contraction of your heart muscle.
+Diastolic Blood Pressure: The pressure in your arteries when your heart muscle is between beats.
+MAP (Mean Arterial Pressure): An average blood pressure in an individual during a single cardiac cycle.
+Heart Rate: The number of heartbeats per minute.
+Respiratory Rate: The number of breaths a person takes per minute.
+Oral Temperature: Body temperature measured orally.
+Pulse Oximetry (Pulse Ox): A noninvasive method to measure the oxygen saturation level of the blood.
+Arterial pH: A measure of the acidity or alkalinity of arterial blood.
+Arterial CO₂ (PaCO₂): Partial pressure of carbon dioxide in arterial blood, indicating how well CO₂ is able to move out of the body.
+Arterial O₂ (PaO₂): Partial pressure of oxygen in arterial blood, reflecting how well oxygen is able to move from the lungs to the blood.
+PaO₂: Same as Arterial O₂; partial pressure of oxygen in arterial blood.
+FiO₂ (Fraction of Inspired Oxygen): The concentration of oxygen in the air we breathe.
+Creatinine: A waste product from muscle metabolism, used to assess kidney function.
+BUN (Blood Urea Nitrogen): Measures the amount of nitrogen in the blood that comes from urea, indicating kidney function.
+GFR_21 (Glomerular Filtration Rate): A test to check how well the kidneys are filtering blood.
+Sodium (Na): An essential electrolyte that helps maintain fluid balance and nerve function.
+Potassium (K): An essential electrolyte important for heart and muscle function.
+Chloride (Cl): An electrolyte that helps maintain fluid balance and acid-base balance.
+Bicarbonate (HCO₃): An electrolyte that indicates the acid-base balance in the body.
+Calcium (Ca): A mineral important for bone health and muscle function.
+Ionized Calcium (Ca²⁺): The biologically active form of calcium in the blood.
+Phosphate: A mineral important for energy storage and bone health.
+Magnesium (Mg): An electrolyte important for muscle and nerve function.
+Osmolality: A measure of the body's electrolyte-water balance.
+Urine Sodium (Na_Urine): Measures the amount of sodium excreted in the urine.
+Urine Osmolality: Indicates the concentration of particles in urine, assessing kidney concentrating ability.
+Urine Creatinine: Measures creatinine levels in urine, used in kidney function tests.
+Urine Urea: Measures urea concentration in urine, reflecting protein metabolism.
+Urine Protein Strip: A test strip used to detect protein levels in urine.
+Urine Protein: Quantitative measurement of protein in urine over a specific period.
+Urine RBC (Red Blood Cells): Presence of red blood cells in urine, may indicate bleeding in the urinary tract.
+Ferritin: A protein that stores iron, indicating the body's iron reserves.
+D-dimer: A protein fragment from blood clot degradation; elevated levels may indicate clotting disorders.
+ESR (Erythrocyte Sedimentation Rate): A test that measures inflammation in the body.
+CRP (C-Reactive Protein): A substance produced by the liver in response to inflammation.
+IL-6 (Interleukin-6): A cytokine involved in inflammation and immune response.
+WBC (White Blood Cells): Cells that fight infection and are part of the immune system.
+Lymphocyte Count: A type of white blood cell important for immune function.
+Serum Albumin: The main protein in blood plasma, essential for maintaining oncotic pressure.
+Procalcitonin: A precursor of the hormone calcitonin; elevated levels can indicate bacterial infection.
+LDH (Lactate Dehydrogenase): An enzyme involved in energy production; elevated levels may indicate tissue damage.
+Lactate: A byproduct of anaerobic metabolism; elevated levels can indicate hypoxia.
+Hemoglobin (Hb): The protein in red blood cells responsible for carrying oxygen.
+Platelets: Cell fragments that play a crucial role in blood clotting.
+INR (International Normalized Ratio): A standardized measure of blood clotting time.
+BNP (B-Type Natriuretic Peptide): A hormone produced by your heart; elevated levels may indicate heart failure.
+Troponin: A protein released when the heart muscle has been damaged.
+AST (Aspartate Aminotransferase): An enzyme found in the liver and other tissues; elevated levels may indicate liver damage.
+ALT (Alanine Aminotransferase): An enzyme primarily found in the liver; elevated levels suggest liver injury.
+CPK (Creatine Phosphokinase): An enzyme found in the heart, brain, and skeletal muscle; elevated levels indicate muscle damage.
+LDL (Low-Density Lipoprotein): Often referred to as "bad cholesterol"; high levels can lead to plaque buildup in arteries.
+Triglycerides: A type of fat (lipid) found in your blood; high levels can increase the risk of heart disease.
+HDL (High-Density Lipoprotein): Known as "good cholesterol"; helps remove other forms of cholesterol from the bloodstream.
+Renin: An enzyme secreted by the kidneys that regulates blood pressure and fluid balance.
+Glucose: A simple sugar that is the primary energy source for the body's cells.

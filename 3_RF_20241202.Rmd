@@ -1,0 +1,123 @@
+---
+title: "RF"
+author: "Weihao Wang"
+date: "2024-12-02"
+output: html_document
+---
+
+# Missing Imputation
+
+Missing counts (rates): wbc 2 (0.1%), hb 2 (0.1%), platelets 2 (0.1%), phosphate 68 (3.9%), mg 54 (3.1%).
+
+## Why Choose mice for This Case
+
+Given the moderate sample size of 1747 and a low missing rate (<5%), mice is well-suited because it efficiently handles missing data with statistically sound methods like Predictive Mean Matching (PMM). PMM ensures that imputed values are plausible and consistent with the observed data distribution, making it ideal for continuous variables. Additionally, mice accounts for the uncertainty in imputations, which is particularly useful in cases where downstream analyses require robust statistical inference.
+
+## Description of mice
+
+mice (Multivariate Imputation by Chained Equations) is an R package designed to handle missing data through multiple imputations. It uses an iterative process where each missing value is imputed by a regression model based on other variables. The imputation methods are flexible, supporting linear regression, predictive mean matching (PMM), logistic regression, and more. This process can generate multiple completed datasets to account for uncertainty in the missing data, enhancing the reliability of subsequent analyses. mice is particularly effective for datasets with mixed variable types and a low to moderate level of missingness.
+
+
+
+```{r}
+library(mice)
+library(randomForest)
+
+data_v1 = read.csv('data_cleaned_N1747_49var.csv')
+data_v2 = read.csv('data_cleaned_N1747_57var.csv')
+
+data_aki = data_v2
+missing_counts <- sapply(data_aki, function(x) sum(is.na(x)))
+missing_rates <- missing_counts / nrow(data_aki)  # Multiply by 100 to get a percentage
+missing_summary <- data.frame(
+  Variable = names(data_aki),
+  Missing_Count = missing_counts,
+  Missing_Rate_Percent = missing_rates
+) # Missing: wbc 2, hb 2, platelets 2 (0.1%), phosphate 68 (3.9%), mg 54 (3.1%)
+missing_summary
+
+# Perform imputation using `mice` with Predictive Mean Matching
+imputed_data <- mice(data_v1, m = 1, method = 'pmm', maxit = 5, seed = 123)
+# Extract the completed dataset after imputation
+data_v3 <- complete(imputed_data)
+write.csv(data_v3, 'data_cleaned_N1747_49var_nomissing.csv', row.names = FALSE)
+```
+
+
+```{r}
+data_v3 = read.csv('data_cleaned_N1747_57var_nomissing.csv')
+data_v3$Baseline_eGFR = data_v3$gfr_baseline
+data_v3 = subset(data_v3, select = -c(Female, Non_White,Race_no_matching, Non_Hispanic, Ethnicity_no_matching, Cerebral_ischemia, Transplant_kidney, AKI_123, AKI_1, AKI_2, AKI_3 , AKI_dx, Mortality, gfr_final, gfr_baseline, gfr_change,gfr_pchange, days_follow_up, n_creatinine_measurements,gfr_change_per_year,gfr_pchange_per_year))
+# Add 'baseline GFR'
+
+data_v4 = data_v3[,1:25]
+
+set.seed(123)
+data = data_v3
+data$fast_eGFR_decline = as.factor(data$fast_eGFR_decline)
+rf1 = randomForest(fast_eGFR_decline~., data = data, importance = T)
+print(rf1)
+RF_for_fast_eGFR_decline = rf1
+varImpPlot(RF_for_fast_eGFR_decline, type = 1)
+varImpPlot(RF_for_fast_eGFR_decline, type = 2)
+```
+
+## a sensitivity analysis for the hyperparameters of a Random Forest (RF) model
+
+Number of Trees (ntree): Controls the number of decision trees in the forest.
+Number of Variables Tried at Each Split (mtry): Controls the number of predictors
+
+```{r}
+library(randomForest)
+library(caret)
+
+data_v3 = read.csv('data_cleaned_N1747_49var_nomissing.csv')
+data_v3 = subset(data_v3, select = -c(Female, Non_White,Race_no_matching, Non_Hispanic, Ethnicity_no_matching, Cerebral_ischemia, Transplant_kidney, AKI_123, AKI_1, AKI_2, AKI_3 , AKI_dx, Mortality, gfr_final, gfr_baseline, gfr_change,gfr_pchange, days_follow_up, n_creatinine_measurements,gfr_change_per_year,gfr_pchange_per_year))
+
+data_v4 = data_v3[,1:25]
+data = data_v4
+data$fast_eGFR_decline = as.factor(data$fast_eGFR_decline)
+
+# Define the grid of hyperparameters
+ntree_values <- c(100, 200, 500, 1000)  # Different numbers of trees
+mtry_values <- c(2, 3, 4, 5)            # Different numbers of variables per split
+
+# Create a data frame to store results
+results <- data.frame(ntree = integer(),
+                      mtry = integer(),
+                      Accuracy = numeric(),
+                      Kappa = numeric())
+
+# Perform sensitivity analysis
+set.seed(42)  # For reproducibility
+
+for (ntree in ntree_values) {
+  for (mtry in mtry_values) {
+    # Fit the Random Forest model
+    rf_model <- randomForest(fast_eGFR_decline ~ ., 
+                             data = data, 
+                             ntree = ntree, 
+                             mtry = mtry, 
+                             importance = TRUE)
+    
+    # Evaluate model performance using 5-fold cross-validation
+    control <- trainControl(method = "cv", number = 5)
+    rf_cv <- train(fast_eGFR_decline ~ ., 
+                   data = data, 
+                   method = "rf", 
+                   trControl = control, 
+                   tuneGrid = data.frame(mtry = mtry),
+                   ntree = ntree)
+    
+    # Append results
+    results <- rbind(results, data.frame(ntree = ntree, 
+                                         mtry = mtry, 
+                                         Accuracy = rf_cv$results$Accuracy[1],
+                                         Kappa = rf_cv$results$Kappa[1]))
+  }
+}
+
+# Print results
+print(results)
+write.csv(results, 'results/RF_sensitive_analysis.csv', row.names = F)
+```

@@ -1,0 +1,139 @@
+---
+title: "4_Some_reviewer_comments"
+author: "Weihao Wang"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+
+data_v3 = read.csv('data_cleaned_N1747_57var_nomissing.csv')
+
+# R1C2
+data = data_v3
+# Counting numbers and percentages for each condition separately
+result1 <- data %>%
+  summarise(
+    count_COVID = sum(COVID == 1),
+    percentage_COVID = sum(COVID == 1) / n() * 100,
+    count_AKI_23 = sum(AKI_23 == 1),
+    percentage_AKI_23 = sum(AKI_23 == 1) / n() * 100,
+    count_fast_eGFR_decline = sum(fast_eGFR_decline == 1),
+    percentage_fast_eGFR_decline = sum(fast_eGFR_decline == 1) / n() * 100
+  )
+
+# Counting number and percentage for COVID = 1 and fast_eGFR_decline = 1 within the COVID = 1 subset
+result2 <- data %>%
+  filter(COVID == 0) %>%
+  summarise(
+    count_AKI_23 = sum(AKI_23 ==1 & COVID == 0),
+    percentage_AKI_23 = sum(AKI_23 ==1 & COVID == 0) / n() * 100,
+    count_fast_eGFR_decline = sum(fast_eGFR_decline == 1 & COVID == 0),
+    percentage_fast_eGFR_decline = sum(fast_eGFR_decline == 1 & COVID == 0) / n() * 100
+  )
+
+# Print the results
+print(result1)
+print(result2)
+
+# Create a contingency table of COVID and fast_eGFR_decline
+contingency_table <- table(data$COVID, data$fast_eGFR_decline)
+# Perform the Chi-square test
+chi_square_test <- chisq.test(contingency_table)
+# Print the results
+print(contingency_table)
+print(chi_square_test)
+
+
+# R1C6
+# Calculate the mean of gfr_baseline for the entire dataset
+mean_gfr_all <- mean(data$gfr_baseline, na.rm = TRUE)
+
+# Calculate the mean of gfr_baseline for the COVID subset
+mean_gfr_covid <- data %>%
+  filter(fast_eGFR_decline == 1) %>%
+  summarise(mean_gfr = mean(gfr_baseline, na.rm = TRUE)) %>%
+  pull(mean_gfr)
+
+# Calculate the mean of gfr_baseline for the non-COVID subset
+mean_gfr_non_covid <- data %>%
+  filter(fast_eGFR_decline == 0) %>%
+  summarise(mean_gfr = mean(gfr_baseline, na.rm = TRUE)) %>%
+  pull(mean_gfr)
+
+# Print the results
+cat("Mean GFR for the entire dataset:", mean_gfr_all, "\n")
+cat("Mean GFR for the COVID subset:", mean_gfr_covid, "\n")
+cat("Mean GFR for the non-COVID subset:", mean_gfr_non_covid, "\n")
+
+# Calculate the mean of gfr_baseline, gfr_pchange_per_year, and gfr_change_per_year
+# for the entire dataset
+mean_values_all <- data %>%
+  summarise(
+    mean_gfr_baseline = mean(gfr_baseline, na.rm = TRUE),
+    mean_gfr_pchange_per_year = mean(gfr_pchange_per_year, na.rm = TRUE),
+    mean_gfr_change_per_year = mean(gfr_change_per_year, na.rm = TRUE)
+  )
+
+# Calculate the means for the COVID subset
+mean_values_covid <- data %>%
+  filter(COVID == 1) %>%
+  summarise(
+    mean_gfr_baseline = mean(gfr_baseline, na.rm = TRUE),
+    mean_gfr_pchange_per_year = mean(gfr_pchange_per_year, na.rm = TRUE),
+    mean_gfr_change_per_year = mean(gfr_change_per_year, na.rm = TRUE)
+  )
+
+# Calculate the means for the non-COVID subset
+mean_values_non_covid <- data %>%
+  filter(COVID == 0) %>%
+  summarise(
+    mean_gfr_baseline = mean(gfr_baseline, na.rm = TRUE),
+    mean_gfr_pchange_per_year = mean(gfr_pchange_per_year, na.rm = TRUE),
+    mean_gfr_change_per_year = mean(gfr_change_per_year, na.rm = TRUE)
+  )
+
+# Print the results
+cat("Mean values for the entire dataset:\n")
+print(mean_values_all)
+
+cat("\nMean values for the COVID subset:\n")
+print(mean_values_covid)
+
+cat("\nMean values for the non-COVID subset:\n")
+print(mean_values_non_covid)
+
+shapiro.test(data$gfr_baseline[data$fast_eGFR_decline==0])
+shapiro.test(data$gfr_baseline[data$fast_eGFR_decline==1])
+wilcox.test(data$gfr_baseline[data$fast_eGFR_decline==0], data$gfr_baseline[data$fast_eGFR_decline==1])
+```
+
+
+Finally we choose to add WBC: 2 (0.1%), Hb: 2 (0.1%), Platelets: 2 (0.1%) and baseline eGFR (optional)
+The one with 49 variables
+
+DT:
+```{r}
+data = read.csv('data_cleaned_N1747_49var_nomissing.csv')
+data$Baseline_eGFR = data$gfr_baseline
+data = subset(data, select = -c(Female, Non_White,Race_no_matching, Non_Hispanic, Ethnicity_no_matching, Cerebral_ischemia, Transplant_kidney, AKI_123, AKI_1, AKI_2, AKI_3 , AKI_dx, Mortality, gfr_final, gfr_baseline, gfr_change,gfr_pchange, days_follow_up, n_creatinine_measurements,gfr_change_per_year,gfr_pchange_per_year))
+
+data_v1 = data[,1:25] # previous data
+data_v2 = data[,1:28] # add wbc, hb and platelets
+data_v3 = data # add wbc, hb, platelets and baseline eGFR
+
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(dplyr)
+
+data_dt = data_v3 # change here
+data_dt$fast_eGFR_decline  = ifelse(data_dt$fast_eGFR_decline == 1, 'survied', 'died') # survived = aki, died = no aki
+data_dt$fast_eGFR_decline = as.factor(data_dt$fast_eGFR_decline)
+data_dt <- data_dt %>% mutate(across(where(~ all(. %in% c(0, 1))), ~ ifelse(. == 1, "Y", "N")))
+
+model <- rpart(fast_eGFR_decline ~., data = data_dt, method = "class", control = list(maxdepth = 3, cp = -0.5, minsplit = 0.02*dim(data_dt)[1], minbucket = 0.02*dim(data_dt)[1]))
+par(xpd = NA)
+rpart.plot(model, type = 5, extra = 7+100)
+```
